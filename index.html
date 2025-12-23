@@ -362,6 +362,23 @@
 
             <!-- Reports View -->
             <div id="reportsView" class="hidden">
+                <!-- Export/Import Section -->
+                <div class="card" style="background: #F0FDF4; border: 2px solid #86EFAC; margin-bottom: 16px;">
+                    <h3 style="margin-bottom: 12px;">💾 Data Backup</h3>
+                    <div class="grid grid-2" style="gap: 8px;">
+                        <button class="btn btn-success btn-small" onclick="exportData()">
+                            📥 Export Data
+                        </button>
+                        <button class="btn btn-primary btn-small" onclick="document.getElementById('importFile').click()">
+                            📤 Import Data
+                        </button>
+                    </div>
+                    <input type="file" id="importFile" accept=".json" style="display: none;" onchange="importData(event)">
+                    <p style="font-size: 12px; color: #059669; margin-top: 8px;">
+                        Export saves all jobs & expenses. Import restores from backup.
+                    </p>
+                </div>
+
                 <div class="grid grid-2" style="margin-bottom: 16px;">
                     <button class="btn btn-primary" id="dailyBtn" onclick="setReportType('daily')">Daily</button>
                     <button class="btn btn-secondary" id="weeklyBtn" onclick="setReportType('weekly')">Weekly</button>
@@ -536,12 +553,41 @@
             updateUI();
             document.getElementById('reportDate').value = new Date().toISOString().split('T')[0];
             
+            // Check if user should backup (if they have 5+ jobs and haven't backed up recently)
+            checkBackupReminder();
+            
             // PWA install prompt
             window.addEventListener('beforeinstallprompt', (e) => {
                 e.preventDefault();
                 deferredPrompt = e;
                 document.getElementById('installPrompt').classList.remove('hidden');
             });
+        }
+
+        function checkBackupReminder() {
+            if (state.jobs.length >= 5) {
+                const lastBackup = localStorage.getItem('lastBackupDate');
+                const today = new Date().toISOString().split('T')[0];
+                
+                if (!lastBackup || lastBackup !== today) {
+                    // Only remind once per day
+                    const daysSinceBackup = lastBackup ? 
+                        Math.floor((new Date() - new Date(lastBackup)) / (1000 * 60 * 60 * 24)) : 999;
+                    
+                    if (daysSinceBackup >= 3) {
+                        setTimeout(() => {
+                            if (confirm(
+                                `💾 Backup Reminder\n\n` +
+                                `You have ${state.jobs.length} jobs stored.\n` +
+                                `Last backup: ${lastBackup || 'Never'}\n\n` +
+                                `Export your data now to keep it safe?`
+                            )) {
+                                toggleView('reports');
+                            }
+                        }, 2000);
+                    }
+                }
+            }
         }
 
         // Storage functions
@@ -1209,6 +1255,97 @@
 
             document.getElementById('todoProgress').textContent = `${completed}/${total} completed`;
             document.getElementById('todoProgressBar').style.width = `${percentage}%`;
+        }
+
+        // Export/Import Functions
+        function exportData() {
+            const exportData = {
+                version: '1.0',
+                exportDate: new Date().toISOString(),
+                jobs: state.jobs,
+                expenses: state.expenses
+            };
+
+            const dataStr = JSON.stringify(exportData, null, 2);
+            const dataBlob = new Blob([dataStr], { type: 'application/json' });
+            
+            const url = URL.createObjectURL(dataBlob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `field-tracker-backup-${new Date().toISOString().split('T')[0]}.json`;
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+
+            // Record backup date
+            localStorage.setItem('lastBackupDate', new Date().toISOString().split('T')[0]);
+
+            alert(`✅ Data exported successfully!\n\n${state.jobs.length} jobs\n${state.expenses.length} expenses\n\nSave this file somewhere safe!`);
+        }
+
+        function importData(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const importedData = JSON.parse(e.target.result);
+                    
+                    // Validate the data structure
+                    if (!importedData.jobs || !importedData.expenses) {
+                        alert('❌ Invalid backup file format!');
+                        return;
+                    }
+
+                    // Ask for confirmation
+                    const jobCount = importedData.jobs.length;
+                    const expenseCount = importedData.expenses.length;
+                    const exportDate = importedData.exportDate ? 
+                        new Date(importedData.exportDate).toLocaleDateString() : 'Unknown';
+                    
+                    const confirmed = confirm(
+                        `📥 Import Data?\n\n` +
+                        `This backup contains:\n` +
+                        `• ${jobCount} jobs\n` +
+                        `• ${expenseCount} expenses\n` +
+                        `• Exported: ${exportDate}\n\n` +
+                        `⚠️ This will REPLACE your current data!\n\n` +
+                        `Current data:\n` +
+                        `• ${state.jobs.length} jobs\n` +
+                        `• ${state.expenses.length} expenses\n\n` +
+                        `Continue?`
+                    );
+
+                    if (!confirmed) {
+                        document.getElementById('importFile').value = '';
+                        return;
+                    }
+
+                    // Import the data
+                    state.jobs = importedData.jobs;
+                    state.expenses = importedData.expenses;
+                    state.currentState = 'idle';
+                    state.currentJob = null;
+
+                    saveData();
+                    updateUI();
+                    updateReport();
+
+                    alert(`✅ Data imported successfully!\n\n${jobCount} jobs\n${expenseCount} expenses`);
+                    
+                    // Clear the file input
+                    document.getElementById('importFile').value = '';
+                } catch (error) {
+                    console.error('Import error:', error);
+                    alert('❌ Error importing data! File may be corrupted.');
+                    document.getElementById('importFile').value = '';
+                }
+            };
+
+            reader.readAsText(file);
         }
 
         // Allow Enter key to add todos
